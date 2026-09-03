@@ -401,11 +401,17 @@ const CONFIG = {
 
   // Announcements — newest first. Edit freely, add/remove lines any time.
   announcements: [
- { date: "Thursday, Sept. 3", msg: "Welcome to the Bluestone Cafe Crew!" },
     { date: "Mon, Aug 24", msg: "Welcome back! New pastry case labels go up this week — check with Mr. Rath before rearranging anything." },
     { date: "Fri, Aug 21", msg: "Reminder: rinse the milk frother wand after every use, even between drinks." },
     { date: "Wed, Aug 19", msg: "New tip jar design is live — thanks to whoever suggested the mason jar look!" }
-  ]
+  ],
+
+  // Read-receipt tracking. Roster is pulled live from the "Roster" tab of your schedule sheet.
+  scheduleSheetId: "193ROVOztytHWXFk9mR11Hfeimx8P0ISsgnsGqufwdyM",
+  rosterTabName: "Roster",
+
+  // Paste the /exec URL from your Apps Script deployment here to enable read-receipt logging.
+  readReceiptWebAppUrl: "https://script.google.com/macros/s/AKfycbzqocjg9s2ndBc_2J0nymj9XHxqxPjYmPKN6Gnq3rVxIHDaMoudDW8leLGmL3N_q6Ne/exec"
 };
 /* ========================================================= */
 
@@ -431,14 +437,7 @@ function openPanel(key){
   panelBody.innerHTML = "";
 
   if(key === "announcements"){
-    const ul = document.createElement('ul');
-    ul.className = 'announce-list';
-    CONFIG.announcements.forEach(a=>{
-      const li = document.createElement('li');
-      li.innerHTML = '<span class="date">'+a.date+'</span><span class="msg">'+a.msg+'</span>';
-      ul.appendChild(li);
-    });
-    panelBody.appendChild(ul);
+    renderAnnouncements();
     panelBody.style.background = "#fff";
   }
   else if(key === "contact"){
@@ -481,6 +480,97 @@ document.getElementById('panel-close').addEventListener('click', ()=>{
 overlay.addEventListener('click', (e)=>{
   if(e.target === overlay) overlay.classList.remove('open');
 });
+
+let rosterNamesCache = null;
+
+function isPlaceholderVal(url){
+  return !url || url.indexOf("PASTE_YOUR") === 0;
+}
+
+async function fetchRosterNames(){
+  if(rosterNamesCache) return rosterNamesCache;
+  try{
+    const url = "https://docs.google.com/spreadsheets/d/"+CONFIG.scheduleSheetId+"/gviz/tq?tqx=out:json&sheet="+encodeURIComponent(CONFIG.rosterTabName);
+    const res = await fetch(url);
+    const text = await res.text();
+    const json = JSON.parse(text.substring(text.indexOf('{'), text.lastIndexOf('}')+1));
+    const rows = json.table.rows || [];
+    const names = rows
+      .map(r => r.c && r.c[0] && r.c[0].v ? String(r.c[0].v).trim() : null)
+      .filter(n => n && n.toLowerCase() !== "student names");
+    rosterNamesCache = [...new Set(names)];
+    return rosterNamesCache;
+  } catch(err){
+    return [];
+  }
+}
+
+function logReadReceipt(name, announcementMsg, btn){
+  if(isPlaceholderVal(CONFIG.readReceiptWebAppUrl)){
+    btn.textContent = "✓ Marked (logging not set up yet)";
+    btn.disabled = true;
+    return;
+  }
+  const url = CONFIG.readReceiptWebAppUrl
+    + "?name=" + encodeURIComponent(name)
+    + "&announcement=" + encodeURIComponent(announcementMsg);
+  fetch(url, { mode: "no-cors" }).catch(()=>{});
+  btn.textContent = "✓ Thanks, " + name + "!";
+  btn.disabled = true;
+  btn.style.opacity = "0.7";
+}
+
+async function renderAnnouncements(){
+  panelBody.innerHTML = "";
+
+  const nameBar = document.createElement('div');
+  nameBar.style.cssText = "padding:14px 22px;background:#F1E6C8;border-bottom:2px solid #A97C50;display:flex;align-items:center;gap:10px;flex-wrap:wrap;";
+  nameBar.innerHTML = "<label style='font-family:\'IBM Plex Mono\',monospace;font-size:11px;letter-spacing:0.5px;color:#5c4d38;'>WHO'S READING?</label>";
+
+  const select = document.createElement('select');
+  select.id = "reader-name-select";
+  select.style.cssText = "flex:1;min-width:160px;padding:8px 10px;border-radius:8px;border:1px solid #A97C50;font-family:'Karla',sans-serif;font-size:14px;background:#fff;";
+  select.innerHTML = "<option value=''>Loading names…</option>";
+  nameBar.appendChild(select);
+  panelBody.appendChild(nameBar);
+
+  const ul = document.createElement('ul');
+  ul.className = 'announce-list';
+  CONFIG.announcements.forEach((a, i)=>{
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="date">'+a.date+'</span><span class="msg">'+a.msg+'</span>';
+
+    const btn = document.createElement('button');
+    btn.textContent = "✓ I've read this";
+    btn.style.cssText = "margin-top:10px;padding:9px 14px;border:none;border-radius:8px;background:#B8543A;color:#F8F1DE;font-family:'Karla',sans-serif;font-weight:700;font-size:13px;cursor:pointer;display:block;";
+    btn.addEventListener('click', ()=>{
+      const nameField = document.getElementById('reader-name-select');
+      const name = nameField ? nameField.value.trim() : "";
+      if(!name){
+        alert("Please select (or type) your name first.");
+        return;
+      }
+      logReadReceipt(name, a.msg, btn);
+    });
+    li.appendChild(btn);
+    ul.appendChild(li);
+  });
+  panelBody.appendChild(ul);
+
+  const names = await fetchRosterNames();
+  if(names.length){
+    select.innerHTML = "<option value=''>Select your name…</option>" + names.map(n => "<option value='"+n.replace(/'/g,"&#39;")+"'>"+n+"</option>").join("");
+  } else {
+    select.innerHTML = "<option value=''>Couldn't load roster — type below</option>";
+    select.style.display = "none";
+    const fallbackInput = document.createElement('input');
+    fallbackInput.type = "text";
+    fallbackInput.placeholder = "Type your name";
+    fallbackInput.id = "reader-name-select";
+    fallbackInput.style.cssText = select.style.cssText;
+    select.replaceWith(fallbackInput);
+  }
+}
 
 function renderDutiesMenu(){
   panelBody.style.background = "#fff";
