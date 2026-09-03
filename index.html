@@ -406,9 +406,10 @@ const CONFIG = {
     { date: "Wed, Aug 19", msg: "New tip jar design is live — thanks to whoever suggested the mason jar look!" }
   ],
 
-  // Read-receipt tracking. Roster is pulled live from the "Roster" tab of your schedule sheet.
+  // Roster and announcements are both pulled live from tabs in your schedule sheet.
   scheduleSheetId: "193ROVOztytHWXFk9mR11Hfeimx8P0ISsgnsGqufwdyM",
   rosterTabName: "Roster",
+  announcementsTabName: "Announcements",
 
   // Paste the /exec URL from your Apps Script deployment here to enable read-receipt logging.
   readReceiptWebAppUrl: "https://script.google.com/macros/s/AKfycbzqocjg9s2ndBc_2J0nymj9XHxqxPjYmPKN6Gnq3rVxIHDaMoudDW8leLGmL3N_q6Ne/exec"
@@ -487,6 +488,31 @@ function isPlaceholderVal(url){
   return !url || url.indexOf("PASTE_YOUR") === 0;
 }
 
+let announcementsCache = null;
+
+async function fetchAnnouncements(){
+  if(announcementsCache) return announcementsCache;
+  try{
+    const url = "https://docs.google.com/spreadsheets/d/"+CONFIG.scheduleSheetId+"/gviz/tq?tqx=out:json&sheet="+encodeURIComponent(CONFIG.announcementsTabName);
+    const res = await fetch(url);
+    const text = await res.text();
+    const json = JSON.parse(text.substring(text.indexOf('{'), text.lastIndexOf('}')+1));
+    const rows = json.table.rows || [];
+    const items = rows
+      .map(r => {
+        const date = r.c && r.c[0] && r.c[0].v ? String(r.c[0].v).trim() : "";
+        const msg = r.c && r.c[1] && r.c[1].v ? String(r.c[1].v).trim() : "";
+        return (date || msg) ? { date, msg } : null;
+      })
+      .filter(Boolean)
+      .reverse(); // newest row (bottom of sheet) shown first
+    announcementsCache = items;
+    return items;
+  } catch(err){
+    return null; // signals "fetch failed" so we can fall back
+  }
+}
+
 async function fetchRosterNames(){
   if(rosterNamesCache) return rosterNamesCache;
   try{
@@ -536,7 +562,20 @@ async function renderAnnouncements(){
 
   const ul = document.createElement('ul');
   ul.className = 'announce-list';
-  CONFIG.announcements.forEach((a, i)=>{
+  ul.innerHTML = "<li style='padding:20px 22px;color:#8a7a5c;'>Loading announcements…</li>";
+  panelBody.appendChild(ul);
+
+  let items = await fetchAnnouncements();
+  if(items === null){
+    // fetch failed entirely — fall back to the built-in list in CONFIG
+    items = CONFIG.announcements;
+  }
+
+  ul.innerHTML = "";
+  if(!items.length){
+    ul.innerHTML = "<li style='padding:20px 22px;color:#8a7a5c;'>No announcements yet.</li>";
+  }
+  items.forEach((a)=>{
     const li = document.createElement('li');
     li.innerHTML = '<span class="date">'+a.date+'</span><span class="msg">'+a.msg+'</span>';
 
@@ -555,7 +594,6 @@ async function renderAnnouncements(){
     li.appendChild(btn);
     ul.appendChild(li);
   });
-  panelBody.appendChild(ul);
 
   const names = await fetchRosterNames();
   if(names.length){
